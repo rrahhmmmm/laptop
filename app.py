@@ -1028,9 +1028,9 @@ def main():
     <div class="hero-section">
         <div class="hero-badge">
             <span>✨</span>
-            <span>Powered by SAW Algorithm</span>
+            <span>KELOMPOK 3 - Powered by SAW Algorithm</span>
         </div>
-        <h1 class="hero-title">LaptopFinder AI</h1>
+        <h1 class="hero-title">LAPTOP FINDER</h1>
         <p class="hero-subtitle">
             Sistem cerdas untuk menemukan laptop impian Anda.
             Analisis {total}+ laptop dengan teknologi Decision Support System.
