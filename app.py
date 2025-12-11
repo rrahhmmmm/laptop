@@ -9,12 +9,67 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import os
+import re
 from data_processor import load_data, preprocess_data, filter_by_category, get_category_counts
 from saw_method import (
     calculate_saw_scores,
     rank_alternatives,
     CRITERIA_CONFIG,
 )
+
+# Path to data file
+DATA_FILE = 'laptop.csv'
+
+
+def save_to_csv(new_data: dict):
+    """Save new laptop data to CSV file"""
+    # Load existing data
+    df = pd.read_csv(DATA_FILE)
+
+    # Create new row
+    new_row = pd.DataFrame([new_data])
+
+    # Append to dataframe
+    df = pd.concat([df, new_row], ignore_index=True)
+
+    # Save back to CSV
+    df.to_csv(DATA_FILE, index=False)
+
+    # Clear cache to reload data
+    st.cache_data.clear()
+
+    return True
+
+
+def import_from_excel(uploaded_file):
+    """Import data from Excel file"""
+    try:
+        # Read Excel file
+        new_df = pd.read_excel(uploaded_file)
+
+        # Check required columns
+        required_cols = ['Model', 'Price', 'Ram', 'SSD', 'Display', 'Graphics']
+        missing_cols = [col for col in required_cols if col not in new_df.columns]
+
+        if missing_cols:
+            return False, f"Missing columns: {', '.join(missing_cols)}"
+
+        # Load existing data
+        existing_df = pd.read_csv(DATA_FILE)
+
+        # Append new data
+        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+
+        # Save to CSV
+        combined_df.to_csv(DATA_FILE, index=False)
+
+        # Clear cache
+        st.cache_data.clear()
+
+        return True, f"Successfully imported {len(new_df)} laptops!"
+    except Exception as e:
+        return False, f"Error: {str(e)}"
 
 # Page configuration
 st.set_page_config(
@@ -753,6 +808,221 @@ def main():
         st.error(f"Error loading data: {str(e)}")
         return
 
+    # ========== DATA MANAGEMENT SECTION (TOP) ==========
+    with st.expander("📥 Kelola Data Laptop", expanded=False):
+        st.markdown("""
+        <div style="
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(236, 72, 153, 0.05));
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        ">
+            <h4 style="color: #fff; margin: 0;">Tambah Data Laptop Baru</h4>
+            <p style="color: #94a3b8; font-size: 0.85rem; margin: 0.5rem 0 0 0;">
+                Input manual atau import dari file Excel (.xlsx)
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        tab1, tab2, tab3 = st.tabs(["📝 Input Manual", "📊 Import Excel", "👁️ Lihat Data"])
+
+        # Tab 1: Manual Input
+        with tab1:
+            st.markdown("##### Masukkan Data Laptop Baru")
+
+            col_form1, col_form2 = st.columns(2)
+
+            with col_form1:
+                model_name = st.text_input(
+                    "Nama Model Laptop *",
+                    placeholder="Contoh: ASUS ROG Strix G15",
+                    key="input_model"
+                )
+                price = st.number_input(
+                    "Harga (Rp) *",
+                    min_value=0,
+                    value=10000000,
+                    step=500000,
+                    format="%d",
+                    key="input_price",
+                    help="Masukkan harga dalam Rupiah"
+                )
+                ram = st.selectbox(
+                    "RAM (GB) *",
+                    options=[4, 8, 16, 32, 64],
+                    index=1,
+                    key="input_ram"
+                )
+                ssd = st.selectbox(
+                    "Storage/SSD (GB) *",
+                    options=[128, 256, 512, 1024, 2048],
+                    index=2,
+                    key="input_ssd"
+                )
+
+            with col_form2:
+                display_size = st.selectbox(
+                    "Ukuran Layar (inch) *",
+                    options=[13.3, 14.0, 15.6, 16.0, 17.3],
+                    index=2,
+                    key="input_display"
+                )
+                graphics = st.text_input(
+                    "Graphics/GPU *",
+                    placeholder="Contoh: NVIDIA GeForce RTX 4060 8GB",
+                    key="input_graphics"
+                )
+                rating = st.slider(
+                    "Rating (0-100)",
+                    min_value=0,
+                    max_value=100,
+                    value=70,
+                    key="input_rating"
+                )
+                generation = st.text_input(
+                    "Processor/Generation",
+                    placeholder="Contoh: 13th Gen Intel Core i7",
+                    key="input_gen"
+                )
+
+            col_extra1, col_extra2, col_extra3 = st.columns(3)
+            with col_extra1:
+                core = st.text_input(
+                    "Core Info",
+                    placeholder="Contoh: Octa Core, 16 Threads",
+                    key="input_core"
+                )
+            with col_extra2:
+                os_type = st.selectbox(
+                    "Operating System",
+                    options=["Windows 11 OS", "Windows 10 OS", "Mac OS", "DOS OS", "Linux"],
+                    key="input_os"
+                )
+            with col_extra3:
+                warranty = st.selectbox(
+                    "Warranty",
+                    options=["1 Year Warranty", "2 Year Warranty", "3 Year Warranty"],
+                    key="input_warranty"
+                )
+
+            if st.button("💾 Simpan Data Laptop", type="primary", use_container_width=True):
+                if model_name and graphics:
+                    # Convert price from IDR to INR for storage (1 INR ≈ 192 IDR)
+                    price_inr = price / 192
+
+                    new_laptop = {
+                        'Unnamed: 0': '',
+                        'Model': model_name,
+                        'Price': f"₹{price_inr:,.0f}",
+                        'Rating': rating,
+                        'Generation': generation if generation else 'N/A',
+                        'Core': core if core else 'N/A',
+                        'Ram': f"{ram} GB DDR4 RAM",
+                        'SSD': f"{ssd} GB SSD",
+                        'Display': f"{display_size} inches, 1920 x 1080 pixels",
+                        'Graphics': graphics,
+                        'OS': os_type,
+                        'Warranty': warranty
+                    }
+
+                    if save_to_csv(new_laptop):
+                        st.success(f"✅ Laptop '{model_name}' berhasil ditambahkan!")
+                        st.balloons()
+                        st.rerun()
+                else:
+                    st.error("❌ Mohon isi Nama Model dan Graphics!")
+
+        # Tab 2: Import Excel
+        with tab2:
+            st.markdown("##### Import Data dari Excel")
+
+            st.info("""
+            **Format Excel yang dibutuhkan:**
+            - Kolom wajib: `Model`, `Price`, `Ram`, `SSD`, `Display`, `Graphics`
+            - Kolom opsional: `Rating`, `Generation`, `Core`, `OS`, `Warranty`
+            """)
+
+            # Download template button
+            template_data = {
+                'Model': ['Contoh Laptop 1', 'Contoh Laptop 2'],
+                'Price': ['₹50,000', '₹75,000'],
+                'Rating': [70, 80],
+                'Generation': ['13th Gen Intel Core i5', '12th Gen Intel Core i7'],
+                'Core': ['Quad Core, 8 Threads', 'Octa Core, 16 Threads'],
+                'Ram': ['8 GB DDR4 RAM', '16 GB DDR5 RAM'],
+                'SSD': ['512 GB SSD', '1 TB SSD'],
+                'Display': ['15.6 inches, 1920 x 1080 pixels', '14 inches, 2560 x 1600 pixels'],
+                'Graphics': ['Intel Iris Xe', 'NVIDIA GeForce RTX 3050 4GB'],
+                'OS': ['Windows 11 OS', 'Windows 11 OS'],
+                'Warranty': ['1 Year Warranty', '1 Year Warranty']
+            }
+            template_df = pd.DataFrame(template_data)
+
+            # Create downloadable template
+            import io
+            buffer = io.BytesIO()
+            template_df.to_excel(buffer, index=False, engine='openpyxl')
+            buffer.seek(0)
+
+            st.download_button(
+                label="📥 Download Template Excel",
+                data=buffer,
+                file_name="template_laptop.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+
+            uploaded_file = st.file_uploader(
+                "Upload File Excel (.xlsx)",
+                type=['xlsx'],
+                key="excel_upload"
+            )
+
+            if uploaded_file is not None:
+                # Preview the data
+                preview_df = pd.read_excel(uploaded_file)
+                st.markdown("**Preview Data:**")
+                st.dataframe(preview_df.head(5), use_container_width=True)
+
+                col_imp1, col_imp2 = st.columns(2)
+                with col_imp1:
+                    st.metric("Jumlah Data", len(preview_df))
+                with col_imp2:
+                    st.metric("Kolom", len(preview_df.columns))
+
+                if st.button("📤 Import Data", type="primary", use_container_width=True):
+                    uploaded_file.seek(0)  # Reset file pointer
+                    success, message = import_from_excel(uploaded_file)
+                    if success:
+                        st.success(message)
+                        st.balloons()
+                        st.rerun()
+                    else:
+                        st.error(message)
+
+        # Tab 3: View Data
+        with tab3:
+            st.markdown("##### Data Laptop Saat Ini")
+
+            # Load raw data
+            raw_df = pd.read_csv(DATA_FILE)
+
+            col_view1, col_view2, col_view3 = st.columns(3)
+            with col_view1:
+                st.metric("Total Data", len(raw_df))
+            with col_view2:
+                st.metric("Kolom", len(raw_df.columns))
+            with col_view3:
+                search = st.text_input("🔍 Cari Model", placeholder="Ketik nama laptop...", key="search_model")
+
+            if search:
+                filtered = raw_df[raw_df['Model'].str.contains(search, case=False, na=False)]
+                st.dataframe(filtered[['Model', 'Price', 'Ram', 'SSD', 'Graphics', 'Rating']].head(20), use_container_width=True, hide_index=True)
+                st.caption(f"Menampilkan {len(filtered)} hasil")
+            else:
+                st.dataframe(raw_df[['Model', 'Price', 'Ram', 'SSD', 'Graphics', 'Rating']].tail(10), use_container_width=True, hide_index=True)
+                st.caption("Menampilkan 10 data terakhir")
+
     # ========== HERO SECTION ==========
     st.markdown("""
     <div class="hero-section">
@@ -763,10 +1033,10 @@ def main():
         <h1 class="hero-title">LaptopFinder AI</h1>
         <p class="hero-subtitle">
             Sistem cerdas untuk menemukan laptop impian Anda.
-            Analisis 920+ laptop dengan teknologi Decision Support System.
+            Analisis {total}+ laptop dengan teknologi Decision Support System.
         </p>
     </div>
-    """, unsafe_allow_html=True)
+    """.format(total=len(df)), unsafe_allow_html=True)
 
     # ========== STATS SECTION ==========
     st.markdown(f"""
