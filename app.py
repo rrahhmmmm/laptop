@@ -219,6 +219,7 @@ st.markdown("""
         margin: 0 auto 2rem;
         line-height: 1.6;
         text-align: center;
+        align-items: center;
         display: block;
     }
 
@@ -1247,21 +1248,6 @@ def main():
     # ===== TAB 1: AI CHAT =====
     with tab_ai:
         st.session_state['use_ai_mode'] = True
-
-        # Info banner - No API key needed
-        st.markdown("""
-        <div style="
-            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(6, 182, 212, 0.1));
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            border-radius: 12px;
-            padding: 1rem;
-            margin-bottom: 1rem;
-        ">
-            <p style="color: #34d399; font-size: 0.9rem; margin: 0;">
-                ✅ <strong>AI Siap Digunakan!</strong> - Tidak perlu API key, langsung chat dengan AI.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
 
         # Chat Interface
         st.markdown("""
