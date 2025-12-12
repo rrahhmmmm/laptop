@@ -17,6 +17,11 @@ from saw_method import (
     rank_alternatives,
     CRITERIA_CONFIG,
 )
+from ai_assistant import (
+    parse_user_message,
+    convert_ai_filters_to_app_filters,
+    convert_ai_weights_to_app_weights,
+)
 
 # Path to data file
 DATA_FILE = 'laptop.csv'
@@ -213,6 +218,8 @@ st.markdown("""
         max-width: 600px;
         margin: 0 auto 2rem;
         line-height: 1.6;
+        text-align: center;
+        display: block;
     }
 
     /* Glass Card */
@@ -728,6 +735,123 @@ st.markdown("""
         .weight-display { grid-template-columns: repeat(3, 1fr); }
         .result-podium { grid-template-columns: 1fr; }
     }
+
+    /* Chat Bubble Styles */
+    .chat-container {
+        max-height: 400px;
+        overflow-y: auto;
+        padding: 1rem;
+        background: rgba(15, 23, 42, 0.5);
+        border-radius: 16px;
+        margin-bottom: 1rem;
+    }
+
+    .chat-bubble {
+        max-width: 85%;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1rem;
+        line-height: 1.5;
+        font-size: 0.95rem;
+    }
+
+    .chat-bubble-ai {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.15));
+        border: 1px solid rgba(99, 102, 241, 0.3);
+        border-radius: 20px 20px 20px 4px;
+        margin-right: auto;
+        color: #e2e8f0;
+    }
+
+    .chat-bubble-user {
+        background: linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(244, 63, 94, 0.15));
+        border: 1px solid rgba(236, 72, 153, 0.3);
+        border-radius: 20px 20px 4px 20px;
+        margin-left: auto;
+        color: #e2e8f0;
+        text-align: right;
+    }
+
+    .chat-sender {
+        font-size: 0.75rem;
+        color: #64748b;
+        margin-bottom: 0.25rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .chat-bubble-ai .chat-sender {
+        justify-content: flex-start;
+    }
+
+    .chat-bubble-user .chat-sender {
+        justify-content: flex-end;
+    }
+
+    .ai-filters-badge {
+        display: inline-block;
+        background: rgba(16, 185, 129, 0.2);
+        border: 1px solid rgba(16, 185, 129, 0.3);
+        color: #34d399;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.8rem;
+        margin: 0.25rem 0.25rem 0.25rem 0;
+    }
+
+    .ai-thinking {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        color: #94a3b8;
+        font-size: 0.9rem;
+        padding: 1rem;
+    }
+
+    .ai-thinking .dot {
+        width: 8px;
+        height: 8px;
+        background: #6366f1;
+        border-radius: 50%;
+        animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    .ai-thinking .dot:nth-child(2) { animation-delay: 0.2s; }
+    .ai-thinking .dot:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 0.3; transform: scale(0.8); }
+        50% { opacity: 1; transform: scale(1); }
+    }
+
+    /* API Key Input */
+    .api-key-container {
+        background: linear-gradient(135deg, rgba(30, 41, 59, 0.8), rgba(30, 41, 59, 0.4));
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+
+    .api-key-status {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.5rem 1rem;
+        border-radius: 8px;
+        font-size: 0.85rem;
+        margin-top: 0.5rem;
+    }
+
+    .api-key-status.valid {
+        background: rgba(16, 185, 129, 0.2);
+        color: #34d399;
+    }
+
+    .api-key-status.invalid {
+        background: rgba(239, 68, 68, 0.2);
+        color: #f87171;
+    }
 </style>
 
 <!-- Background Orbs -->
@@ -759,22 +883,16 @@ def get_data_statistics(df):
     return stats
 
 
-def star_to_weight(stars: int) -> float:
-    """Convert star rating (1-5) to weight value"""
-    mapping = {1: 0.05, 2: 0.10, 3: 0.15, 4: 0.20, 5: 0.25}
-    return mapping.get(stars, 0.15)
-
-
 def format_price(price):
     """Format price to Rupiah (IDR) - assuming 1 INR = 192 IDR (approximate rate)"""
     # Convert from INR to IDR (1 INR ≈ 192 IDR)
     price_idr = price * 192
     if price_idr >= 1000000000:  # >= 1 Miliar
-        return f"Rp {price_idr/1000000000:.1f} M"
+        return f"Rp {price_idr/1000000000:.1f} Miliar"
     elif price_idr >= 1000000:  # >= 1 Juta
-        return f"Rp {price_idr/1000000:.1f} Jt"
+        return f"Rp {price_idr/1000000:.1f} Juta"
     else:
-        return f"Rp {price_idr:,.0f}"
+        return f"Rp {price_idr:,.0f}".replace(",", ".")
 
 
 def format_price_display(price_str):
@@ -786,9 +904,9 @@ def format_price_display(price_str):
         price_inr = float(cleaned)
         price_idr = price_inr * 192  # Convert to IDR
         if price_idr >= 1000000:
-            return f"Rp {price_idr/1000000:.1f} Jt"
+            return f"Rp {price_idr/1000000:.1f} Juta"
         else:
-            return f"Rp {price_idr:,.0f}"
+            return f"Rp {price_idr:,.0f}".replace(",", ".")
     except:
         return price_str
 
@@ -1101,223 +1219,481 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # ========== STEP 2: PRIORITIES ==========
+    # ========== STEP 2: AI CHAT & FILTER ==========
     st.markdown("""
     <div class="section-header">
         <div class="section-number">2</div>
-        <div class="section-title">Tentukan Filter & Prioritas Kriteria</div>
+        <div class="section-title">Cari Laptop dengan AI atau Filter Manual</div>
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("""
-    <div style="
-        background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(236, 72, 153, 0.05));
-        border-radius: 12px;
-        padding: 1rem;
-        margin-bottom: 1.5rem;
-        border: 1px solid rgba(99, 102, 241, 0.2);
-    ">
-        <p style="color: #94a3b8; font-size: 0.9rem; margin: 0;">
-            🎯 <strong style="color: #fff;">Cara penggunaan:</strong> Tentukan range filter untuk masing-masing kriteria,
-            lalu berikan prioritas dengan bintang ⭐ (1 = tidak penting, 5 = sangat penting)
-        </p>
-    </div>
-    """, unsafe_allow_html=True)
+    # Initialize session states
+    if 'chat_history' not in st.session_state:
+        st.session_state['chat_history'] = []
+    if 'ai_filters' not in st.session_state:
+        st.session_state['ai_filters'] = {}
+    if 'ai_weights' not in st.session_state:
+        st.session_state['ai_weights'] = {}
+    if 'use_ai_mode' not in st.session_state:
+        st.session_state['use_ai_mode'] = True
 
     # Convert price range to IDR for display
     price_min_idr = int(data_stats['price']['min'] * 192)
     price_max_idr = int(data_stats['price']['max'] * 192)
 
-    col1, col2 = st.columns(2)
+    # Tabs for AI Chat and Manual Filter
+    tab_ai, tab_manual = st.tabs(["💬 Chat dengan AI", "⚙️ Filter Manual"])
 
-    with col1:
-        # Price
+    # ===== TAB 1: AI CHAT =====
+    with tab_ai:
+        st.session_state['use_ai_mode'] = True
+
+        # Info banner - No API key needed
         st.markdown("""
-        <div class="criteria-card">
-            <div class="criteria-header">
-                <div class="criteria-icon price">💰</div>
-                <span class="criteria-name">Harga / Budget</span>
-                <span class="criteria-type cost">COST</span>
-            </div>
+        <div style="
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(6, 182, 212, 0.1));
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        ">
+            <p style="color: #34d399; font-size: 0.9rem; margin: 0;">
+                ✅ <strong>AI Siap Digunakan!</strong> - Tidak perlu API key, langsung chat dengan AI.
+            </p>
         </div>
         """, unsafe_allow_html=True)
-        price_range = st.slider(
-            "Range Harga (Rp)",
-            min_value=price_min_idr,
-            max_value=price_max_idr,
-            value=(price_min_idr, price_max_idr),
-            step=1000000,
-            format="Rp %d",
-            key="filter_price"
-        )
-        price_stars = st.slider("⭐ Prioritas Harga", 1, 5, 5, key="star_price")
-        st.caption(f"Prioritas: {'⭐' * price_stars}")
 
-        # RAM
+        # Chat Interface
         st.markdown("""
-        <div class="criteria-card">
-            <div class="criteria-header">
-                <div class="criteria-icon ram">🧠</div>
-                <span class="criteria-name">RAM / Memori</span>
-                <span class="criteria-type benefit">BENEFIT</span>
-            </div>
+        <div style="
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(236, 72, 153, 0.05));
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        ">
+            <p style="color: #94a3b8; font-size: 0.9rem; margin: 0;">
+                💡 <strong style="color: #fff;">Contoh pertanyaan:</strong><br>
+                "Saya butuh laptop untuk editing video, budget 15 juta"<br>
+                "Cari laptop gaming murah dengan RAM besar"<br>
+                "Laptop untuk mahasiswa, ringan dan tahan lama"
+            </p>
         </div>
         """, unsafe_allow_html=True)
-        ram_options = data_stats['ram']['options']
-        ram_range = st.select_slider(
-            "Range RAM (GB)",
-            options=ram_options,
-            value=(min(ram_options), max(ram_options)),
-            key="filter_ram"
-        )
-        ram_stars = st.slider("⭐ Prioritas RAM", 1, 5, 4, key="star_ram")
-        st.caption(f"Prioritas: {'⭐' * ram_stars}")
 
-        # Storage
-        st.markdown("""
-        <div class="criteria-card">
-            <div class="criteria-header">
-                <div class="criteria-icon storage">💾</div>
-                <span class="criteria-name">Storage / SSD</span>
-                <span class="criteria-type benefit">BENEFIT</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        ssd_options = data_stats['ssd']['options']
-        ssd_range = st.select_slider(
-            "Range SSD (GB)",
-            options=ssd_options,
-            value=(min(ssd_options), max(ssd_options)),
-            key="filter_ssd"
-        )
-        ssd_stars = st.slider("⭐ Prioritas SSD", 1, 5, 3, key="star_ssd")
-        st.caption(f"Prioritas: {'⭐' * ssd_stars}")
+        # Display chat history
+        chat_container = st.container()
+        with chat_container:
+            if not st.session_state['chat_history']:
+                st.markdown("""
+                <div class="chat-bubble chat-bubble-ai">
+                    <div class="chat-sender">🤖 AI Assistant</div>
+                    <div>Halo! Saya siap membantu Anda menemukan laptop yang tepat.
+                    Ceritakan kebutuhan Anda, misalnya untuk apa laptopnya dan berapa budget yang tersedia.</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                for chat in st.session_state['chat_history']:
+                    if chat['role'] == 'user':
+                        st.markdown(f"""
+                        <div class="chat-bubble chat-bubble-user">
+                            <div class="chat-sender">👤 Anda</div>
+                            <div>{chat['content']}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        # Check if this is a recommendation message
+                        if chat.get('is_recommendation'):
+                            # Recommendation message with special styling
+                            st.markdown("""
+                            <div class="chat-bubble chat-bubble-ai" style="
+                                background: linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(6, 182, 212, 0.1));
+                                border: 1px solid rgba(16, 185, 129, 0.3);
+                            ">
+                                <div class="chat-sender">🎯 Hasil Rekomendasi</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            # Use st.markdown for proper markdown rendering
+                            st.markdown(chat['content'])
+                        else:
+                            # AI response with filters badges
+                            filters_html = ""
+                            if chat.get('filters'):
+                                filters_html = "<div style='margin-top: 0.75rem;'>"
+                                f = chat['filters']
+                                if f.get('price_max'):
+                                    filters_html += f"<span class='ai-filters-badge'>💰 Budget ≤ Rp {f['price_max']:,.0f}</span>".replace(",", ".")
+                                if f.get('ram_min'):
+                                    filters_html += f"<span class='ai-filters-badge'>🧠 RAM ≥ {f['ram_min']}GB</span>"
+                                if f.get('gpu_min'):
+                                    filters_html += f"<span class='ai-filters-badge'>🎮 GPU ≥ {f['gpu_min']}GB</span>"
+                                if f.get('ssd_min'):
+                                    filters_html += f"<span class='ai-filters-badge'>💾 SSD ≥ {f['ssd_min']}GB</span>"
+                                filters_html += "</div>"
 
-    with col2:
-        # Rating
-        st.markdown("""
-        <div class="criteria-card">
-            <div class="criteria-header">
-                <div class="criteria-icon rating">⭐</div>
-                <span class="criteria-name">Rating / Penilaian</span>
-                <span class="criteria-type benefit">BENEFIT</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        rating_range = st.slider(
-            "Range Rating",
-            min_value=int(data_stats['rating']['min']),
-            max_value=int(data_stats['rating']['max']),
-            value=(int(data_stats['rating']['min']), int(data_stats['rating']['max'])),
-            key="filter_rating"
-        )
-        rating_stars = st.slider("⭐ Prioritas Rating", 1, 5, 3, key="star_rating")
-        st.caption(f"Prioritas: {'⭐' * rating_stars}")
+                            st.markdown(f"""
+                            <div class="chat-bubble chat-bubble-ai">
+                                <div class="chat-sender">🤖 AI Assistant</div>
+                                <div>{chat['content']}</div>
+                                {filters_html}
+                            </div>
+                            """, unsafe_allow_html=True)
 
-        # Display
-        st.markdown("""
-        <div class="criteria-card">
-            <div class="criteria-header">
-                <div class="criteria-icon display">🖥️</div>
-                <span class="criteria-name">Ukuran Layar</span>
-                <span class="criteria-type benefit">BENEFIT</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        display_range = st.slider(
-            "Range Display (inch)",
-            min_value=float(data_stats['display']['min']),
-            max_value=float(data_stats['display']['max']),
-            value=(float(data_stats['display']['min']), float(data_stats['display']['max'])),
-            step=0.1,
-            key="filter_display"
-        )
-        display_stars = st.slider("⭐ Prioritas Display", 1, 5, 2, key="star_display")
-        st.caption(f"Prioritas: {'⭐' * display_stars}")
+        # Chat input
+        col_input, col_send = st.columns([5, 1])
+        with col_input:
+            user_message = st.text_input(
+                "Ketik pesan",
+                placeholder="Ceritakan kebutuhan laptop Anda...",
+                key="chat_input",
+                label_visibility="collapsed"
+            )
+        with col_send:
+            send_button = st.button("📤", use_container_width=True, key="send_chat")
 
-        # GPU
-        st.markdown("""
-        <div class="criteria-card">
-            <div class="criteria-header">
-                <div class="criteria-icon gpu">🎮</div>
-                <span class="criteria-name">GPU / Kartu Grafis</span>
-                <span class="criteria-type benefit">BENEFIT</span>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        gpu_options = data_stats['gpu']['options']
-        gpu_range = st.select_slider(
-            "Range GPU VRAM (GB)",
-            options=gpu_options,
-            value=(min(gpu_options), max(gpu_options)),
-            format_func=lambda x: f"{x}GB" if x > 0 else "Integrated",
-            key="filter_gpu"
-        )
-        gpu_stars = st.slider("⭐ Prioritas GPU", 1, 5, 3, key="star_gpu")
-        st.caption(f"Prioritas: {'⭐' * gpu_stars}")
+        # Process chat
+        if send_button and user_message:
+            # Add user message to history
+            st.session_state['chat_history'].append({
+                'role': 'user',
+                'content': user_message
+            })
 
-    # Store filter ranges in session state
-    st.session_state['filters'] = {
-        'price': (price_range[0] / 192, price_range[1] / 192),  # Convert back to INR for filtering
-        'ram': ram_range,
-        'ssd': ssd_range,
-        'rating': rating_range,
-        'display': display_range,
-        'gpu': gpu_range
-    }
+            # Process with AI (no API key needed)
+            with st.spinner("🤔 AI sedang menganalisis..."):
+                result = parse_user_message(user_message, data_stats)
 
-    # Calculate weights from star ratings
-    raw_weights = {
-        'price_numeric': star_to_weight(price_stars),
-        'ram_numeric': star_to_weight(ram_stars),
-        'ssd_numeric': star_to_weight(ssd_stars),
-        'rating_numeric': star_to_weight(rating_stars),
-        'display_numeric': star_to_weight(display_stars),
-        'gpu_numeric': star_to_weight(gpu_stars)
-    }
-    total_raw = sum(raw_weights.values())
-    weights = {k: v / total_raw for k, v in raw_weights.items()}
+            if result['success']:
+                # Store filters and weights
+                st.session_state['ai_filters'] = result['filters']
+                st.session_state['ai_weights'] = result['weights']
 
-    # Weight Summary
-    st.markdown("""
-    <div class="section-header">
-        <div class="section-number">📊</div>
-        <div class="section-title">Ringkasan Prioritas & Bobot</div>
-    </div>
-    """, unsafe_allow_html=True)
+                # Convert to app format
+                app_filters = convert_ai_filters_to_app_filters(
+                    result['filters'], data_stats
+                )
+                app_weights = convert_ai_weights_to_app_weights(
+                    result['weights']
+                )
+                st.session_state['filters'] = app_filters
+                st.session_state['weights'] = app_weights
 
-    labels = ['Harga', 'RAM', 'SSD', 'Rating', 'Display', 'GPU']
-    icons = ['💰', '🧠', '💾', '⭐', '🖥️', '🎮']
-    keys = ['price_numeric', 'ram_numeric', 'ssd_numeric', 'rating_numeric', 'display_numeric', 'gpu_numeric']
-    stars_list = [price_stars, ram_stars, ssd_stars, rating_stars, display_stars, gpu_stars]
+                # === AUTO CALCULATE SAW & GENERATE RESULTS ===
+                # Filter data by category
+                filtered_df = filter_by_category(df, selected_cat)
 
-    # Use Streamlit columns for reliable display
-    weight_cols = st.columns(6)
-    for i, (col, label, icon, key, stars) in enumerate(zip(weight_cols, labels, icons, keys, stars_list)):
-        with col:
-            pct = weights[key] * 100
-            star_display = '⭐' * stars + '☆' * (5 - stars)
-            st.markdown(f"""
-            <div style="
-                background: linear-gradient(135deg, rgba(30, 41, 59, 0.6), rgba(30, 41, 59, 0.3));
-                border: 1px solid rgba(255, 255, 255, 0.08);
-                border-radius: 12px;
-                padding: 1rem;
-                text-align: center;
-            ">
-                <div style="font-size: 1.5rem;">{icon}</div>
-                <div style="font-size: 0.8rem; color: #fbbf24; margin: 0.25rem 0;">{star_display}</div>
-                <div style="
-                    font-family: 'Space Grotesk', sans-serif;
-                    font-size: 1.5rem;
-                    font-weight: 700;
-                    background: linear-gradient(135deg, #6366f1, #ec4899);
-                    -webkit-background-clip: text;
-                    -webkit-text-fill-color: transparent;
-                ">{pct:.0f}%</div>
-                <div style="font-size: 0.75rem; color: #94a3b8;">{label}</div>
+                # Apply range filters
+                if app_filters:
+                    filtered_df = filtered_df[
+                        (filtered_df['price_numeric'] >= app_filters['price'][0]) &
+                        (filtered_df['price_numeric'] <= app_filters['price'][1])
+                    ]
+                    filtered_df = filtered_df[
+                        (filtered_df['ram_numeric'] >= app_filters['ram'][0]) &
+                        (filtered_df['ram_numeric'] <= app_filters['ram'][1])
+                    ]
+                    filtered_df = filtered_df[
+                        (filtered_df['ssd_numeric'] >= app_filters['ssd'][0]) &
+                        (filtered_df['ssd_numeric'] <= app_filters['ssd'][1])
+                    ]
+                    filtered_df = filtered_df[
+                        (filtered_df['rating_numeric'] >= app_filters['rating'][0]) &
+                        (filtered_df['rating_numeric'] <= app_filters['rating'][1])
+                    ]
+                    filtered_df = filtered_df[
+                        (filtered_df['display_numeric'] >= app_filters['display'][0]) &
+                        (filtered_df['display_numeric'] <= app_filters['display'][1])
+                    ]
+                    filtered_df = filtered_df[
+                        (filtered_df['gpu_numeric'] >= app_filters['gpu'][0]) &
+                        (filtered_df['gpu_numeric'] <= app_filters['gpu'][1])
+                    ]
+
+                # Generate recommendation message
+                if len(filtered_df) == 0:
+                    recommendation_msg = "😔 Maaf, tidak ada laptop yang sesuai dengan kriteria Anda. Coba perluas budget atau kurangi spesifikasi yang diminta."
+                    st.session_state['chat_history'].append({
+                        'role': 'assistant',
+                        'content': result['response_message'],
+                        'filters': result['filters'],
+                        'weights': result['weights']
+                    })
+                    st.session_state['chat_history'].append({
+                        'role': 'assistant',
+                        'content': recommendation_msg
+                    })
+                else:
+                    # Calculate SAW
+                    scores, decision_matrix, normalized_matrix = calculate_saw_scores(
+                        filtered_df, app_weights, CRITERIA_CONFIG
+                    )
+                    ranked_df = rank_alternatives(filtered_df, scores, min(5, len(filtered_df)))
+
+                    # Store results
+                    st.session_state['results'] = ranked_df
+                    st.session_state['normalized'] = normalized_matrix.loc[ranked_df.index]
+                    st.session_state['decision'] = decision_matrix.loc[ranked_df.index]
+                    st.session_state['show_results'] = True
+
+                    # Build recommendation chat message
+                    recommendation_msg = f"🎯 **Berdasarkan analisis kebutuhan Anda, berikut {min(3, len(ranked_df))} laptop terbaik:**\n\n"
+
+                    medals = ['🥇', '🥈', '🥉']
+                    for i, (idx, laptop) in enumerate(ranked_df.head(3).iterrows()):
+                        medal = medals[i] if i < 3 else f"{i+1}."
+                        price_idr = laptop['price_numeric'] * 192
+                        if price_idr >= 1000000:
+                            price_str = f"Rp {price_idr/1000000:.1f} Juta"
+                        else:
+                            price_str = f"Rp {price_idr:,.0f}".replace(",", ".")
+
+                        recommendation_msg += f"{medal} **{laptop['Model'][:40]}{'...' if len(str(laptop['Model'])) > 40 else ''}**\n"
+                        recommendation_msg += f"   💰 {price_str} | ⭐ Rating: {laptop['Rating']} | Score: {laptop['SAW_Score']:.3f}\n"
+                        recommendation_msg += f"   🧠 {laptop['Ram']} | 💾 {laptop['SSD']}\n\n"
+
+                    # Add summary
+                    top_laptop = ranked_df.iloc[0]
+                    recommendation_msg += f"---\n✨ **Rekomendasi utama:** {top_laptop['Model'][:50]} dengan skor SAW tertinggi ({top_laptop['SAW_Score']:.4f})"
+
+                    # Add AI analysis + recommendations to chat history
+                    st.session_state['chat_history'].append({
+                        'role': 'assistant',
+                        'content': result['response_message'],
+                        'filters': result['filters'],
+                        'weights': result['weights']
+                    })
+                    st.session_state['chat_history'].append({
+                        'role': 'assistant',
+                        'content': recommendation_msg,
+                        'is_recommendation': True
+                    })
+
+                st.session_state['ai_ready'] = True
+                st.rerun()
+            else:
+                # Error handling
+                st.session_state['chat_history'].append({
+                    'role': 'assistant',
+                    'content': result['response_message']
+                })
+                st.error(f"⚠️ {result.get('error', 'Terjadi kesalahan')}")
+
+                col_retry, col_manual = st.columns(2)
+                with col_retry:
+                    if st.button("🔄 Coba Lagi"):
+                        st.rerun()
+                with col_manual:
+                    if st.button("⚙️ Gunakan Mode Manual"):
+                        st.session_state['use_ai_mode'] = False
+                        st.rerun()
+
+        # Clear chat button
+        if st.session_state['chat_history']:
+            if st.button("🗑️ Hapus Riwayat Chat", use_container_width=True):
+                st.session_state['chat_history'] = []
+                st.session_state['ai_filters'] = {}
+                st.session_state['ai_weights'] = {}
+                st.session_state['ai_ready'] = False
+                st.rerun()
+
+        # Show AI-generated weights summary
+        if st.session_state.get('ai_weights'):
+            st.markdown("""
+            <div class="section-header">
+                <div class="section-number">📊</div>
+                <div class="section-title">Prioritas dari AI</div>
             </div>
             """, unsafe_allow_html=True)
+
+            ai_w = st.session_state['ai_weights']
+            labels = ['Harga', 'RAM', 'SSD', 'Rating', 'Display', 'GPU']
+            icons = ['💰', '🧠', '💾', '⭐', '🖥️', '🎮']
+            weight_keys = ['price', 'ram', 'ssd', 'rating', 'display', 'gpu']
+
+            weight_cols = st.columns(6)
+            for col, label, icon, key in zip(weight_cols, labels, icons, weight_keys):
+                with col:
+                    stars = ai_w.get(key, 3)
+                    star_display = '⭐' * stars + '☆' * (5 - stars)
+                    st.markdown(f"""
+                    <div style="
+                        background: linear-gradient(135deg, rgba(30, 41, 59, 0.6), rgba(30, 41, 59, 0.3));
+                        border: 1px solid rgba(99, 102, 241, 0.3);
+                        border-radius: 12px;
+                        padding: 0.75rem;
+                        text-align: center;
+                    ">
+                        <div style="font-size: 1.25rem;">{icon}</div>
+                        <div style="font-size: 0.7rem; color: #fbbf24; margin: 0.25rem 0;">{star_display}</div>
+                        <div style="font-size: 0.7rem; color: #94a3b8;">{label}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+    # ===== TAB 2: MANUAL FILTER =====
+    with tab_manual:
+        st.session_state['use_ai_mode'] = False
+
+        st.markdown("""
+        <div style="
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(236, 72, 153, 0.05));
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            border: 1px solid rgba(99, 102, 241, 0.2);
+        ">
+            <p style="color: #94a3b8; font-size: 0.9rem; margin: 0;">
+                🎯 <strong style="color: #fff;">Mode Manual:</strong> Atur filter range untuk setiap kriteria.
+                Semua kriteria memiliki bobot yang sama (equal weight).
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            # Price
+            st.markdown("""
+            <div class="criteria-card">
+                <div class="criteria-header">
+                    <div class="criteria-icon price">💰</div>
+                    <span class="criteria-name">Harga / Budget</span>
+                    <span class="criteria-type cost">COST</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            manual_price_range = st.slider(
+                "Range Harga",
+                min_value=price_min_idr,
+                max_value=price_max_idr,
+                value=(price_min_idr, price_max_idr),
+                step=1000000,
+                key="manual_filter_price"
+            )
+            st.markdown(f"""
+            <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #a5b4fc; margin-top: -0.5rem;">
+                <span>Min: <strong>Rp {manual_price_range[0]:,.0f}</strong></span>
+                <span>Max: <strong>Rp {manual_price_range[1]:,.0f}</strong></span>
+            </div>
+            """.replace(",", "."), unsafe_allow_html=True)
+
+            # RAM
+            st.markdown("""
+            <div class="criteria-card">
+                <div class="criteria-header">
+                    <div class="criteria-icon ram">🧠</div>
+                    <span class="criteria-name">RAM / Memori</span>
+                    <span class="criteria-type benefit">BENEFIT</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            ram_options = data_stats['ram']['options']
+            manual_ram_range = st.select_slider(
+                "Range RAM (GB)",
+                options=ram_options,
+                value=(min(ram_options), max(ram_options)),
+                key="manual_filter_ram"
+            )
+
+            # Storage
+            st.markdown("""
+            <div class="criteria-card">
+                <div class="criteria-header">
+                    <div class="criteria-icon storage">💾</div>
+                    <span class="criteria-name">Storage / SSD</span>
+                    <span class="criteria-type benefit">BENEFIT</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            ssd_options = data_stats['ssd']['options']
+            manual_ssd_range = st.select_slider(
+                "Range SSD (GB)",
+                options=ssd_options,
+                value=(min(ssd_options), max(ssd_options)),
+                key="manual_filter_ssd"
+            )
+
+        with col2:
+            # Rating
+            st.markdown("""
+            <div class="criteria-card">
+                <div class="criteria-header">
+                    <div class="criteria-icon rating">⭐</div>
+                    <span class="criteria-name">Rating / Penilaian</span>
+                    <span class="criteria-type benefit">BENEFIT</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            manual_rating_range = st.slider(
+                "Range Rating",
+                min_value=int(data_stats['rating']['min']),
+                max_value=int(data_stats['rating']['max']),
+                value=(int(data_stats['rating']['min']), int(data_stats['rating']['max'])),
+                key="manual_filter_rating"
+            )
+
+            # Display
+            st.markdown("""
+            <div class="criteria-card">
+                <div class="criteria-header">
+                    <div class="criteria-icon display">🖥️</div>
+                    <span class="criteria-name">Ukuran Layar</span>
+                    <span class="criteria-type benefit">BENEFIT</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            manual_display_range = st.slider(
+                "Range Display (inch)",
+                min_value=float(data_stats['display']['min']),
+                max_value=float(data_stats['display']['max']),
+                value=(float(data_stats['display']['min']), float(data_stats['display']['max'])),
+                step=0.1,
+                key="manual_filter_display"
+            )
+
+            # GPU
+            st.markdown("""
+            <div class="criteria-card">
+                <div class="criteria-header">
+                    <div class="criteria-icon gpu">🎮</div>
+                    <span class="criteria-name">GPU / Kartu Grafis</span>
+                    <span class="criteria-type benefit">BENEFIT</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            gpu_options = data_stats['gpu']['options']
+            manual_gpu_range = st.select_slider(
+                "Range GPU VRAM (GB)",
+                options=gpu_options,
+                value=(min(gpu_options), max(gpu_options)),
+                format_func=lambda x: f"{x}GB" if x > 0 else "Integrated",
+                key="manual_filter_gpu"
+            )
+
+        # Store manual filter ranges
+        if not st.session_state.get('use_ai_mode') or not st.session_state.get('ai_ready'):
+            st.session_state['filters'] = {
+                'price': (manual_price_range[0] / 192, manual_price_range[1] / 192),
+                'ram': manual_ram_range,
+                'ssd': manual_ssd_range,
+                'rating': manual_rating_range,
+                'display': manual_display_range,
+                'gpu': manual_gpu_range
+            }
+            # Equal weights for manual mode
+            st.session_state['weights'] = {
+                'price_numeric': 1/6,
+                'ram_numeric': 1/6,
+                'ssd_numeric': 1/6,
+                'rating_numeric': 1/6,
+                'display_numeric': 1/6,
+                'gpu_numeric': 1/6
+            }
+
+    # Get current weights for display
+    weights = st.session_state.get('weights', {
+        'price_numeric': 1/6, 'ram_numeric': 1/6, 'ssd_numeric': 1/6,
+        'rating_numeric': 1/6, 'display_numeric': 1/6, 'gpu_numeric': 1/6
+    })
 
     # ========== STEP 3: CALCULATE ==========
     st.markdown("""
