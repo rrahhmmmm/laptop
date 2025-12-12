@@ -759,15 +759,10 @@ def get_data_statistics(df):
     return stats
 
 
-def importance_to_weight(importance: str) -> float:
-    mapping = {
-        "Tidak Penting": 0.05,
-        "Kurang Penting": 0.10,
-        "Cukup Penting": 0.15,
-        "Penting": 0.20,
-        "Sangat Penting": 0.25
-    }
-    return mapping.get(importance, 0.15)
+def star_to_weight(stars: int) -> float:
+    """Convert star rating (1-5) to weight value"""
+    mapping = {1: 0.05, 2: 0.10, 3: 0.15, 4: 0.20, 5: 0.25}
+    return mapping.get(stars, 0.15)
 
 
 def format_price(price):
@@ -1110,102 +1105,175 @@ def main():
     st.markdown("""
     <div class="section-header">
         <div class="section-number">2</div>
-        <div class="section-title">Tentukan Prioritas Kriteria</div>
+        <div class="section-title">Tentukan Filter & Prioritas Kriteria</div>
     </div>
     """, unsafe_allow_html=True)
 
-    importance_options = ["Tidak Penting", "Kurang Penting", "Cukup Penting", "Penting", "Sangat Penting"]
+    st.markdown("""
+    <div style="
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(236, 72, 153, 0.05));
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 1.5rem;
+        border: 1px solid rgba(99, 102, 241, 0.2);
+    ">
+        <p style="color: #94a3b8; font-size: 0.9rem; margin: 0;">
+            🎯 <strong style="color: #fff;">Cara penggunaan:</strong> Tentukan range filter untuk masing-masing kriteria,
+            lalu berikan prioritas dengan bintang ⭐ (1 = tidak penting, 5 = sangat penting)
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Convert price range to IDR for display
+    price_min_idr = int(data_stats['price']['min'] * 192)
+    price_max_idr = int(data_stats['price']['max'] * 192)
 
     col1, col2 = st.columns(2)
 
     with col1:
         # Price
-        st.markdown(f"""
+        st.markdown("""
         <div class="criteria-card">
             <div class="criteria-header">
                 <div class="criteria-icon price">💰</div>
                 <span class="criteria-name">Harga / Budget</span>
                 <span class="criteria-type cost">COST</span>
             </div>
-            <div class="criteria-range">📊 {format_price(data_stats['price']['min'])} - {format_price(data_stats['price']['max'])}</div>
         </div>
         """, unsafe_allow_html=True)
-        price_imp = st.select_slider("Harga", importance_options, "Sangat Penting", key="p_price", label_visibility="collapsed")
+        price_range = st.slider(
+            "Range Harga (Rp)",
+            min_value=price_min_idr,
+            max_value=price_max_idr,
+            value=(price_min_idr, price_max_idr),
+            step=1000000,
+            format="Rp %d",
+            key="filter_price"
+        )
+        price_stars = st.slider("⭐ Prioritas Harga", 1, 5, 5, key="star_price")
+        st.caption(f"Prioritas: {'⭐' * price_stars}")
 
         # RAM
-        st.markdown(f"""
+        st.markdown("""
         <div class="criteria-card">
             <div class="criteria-header">
                 <div class="criteria-icon ram">🧠</div>
                 <span class="criteria-name">RAM / Memori</span>
                 <span class="criteria-type benefit">BENEFIT</span>
             </div>
-            <div class="criteria-range">📊 {', '.join([f'{x}GB' for x in data_stats['ram']['options'][:5]])}...</div>
         </div>
         """, unsafe_allow_html=True)
-        ram_imp = st.select_slider("RAM", importance_options, "Penting", key="p_ram", label_visibility="collapsed")
+        ram_options = data_stats['ram']['options']
+        ram_range = st.select_slider(
+            "Range RAM (GB)",
+            options=ram_options,
+            value=(min(ram_options), max(ram_options)),
+            key="filter_ram"
+        )
+        ram_stars = st.slider("⭐ Prioritas RAM", 1, 5, 4, key="star_ram")
+        st.caption(f"Prioritas: {'⭐' * ram_stars}")
 
         # Storage
-        st.markdown(f"""
+        st.markdown("""
         <div class="criteria-card">
             <div class="criteria-header">
                 <div class="criteria-icon storage">💾</div>
                 <span class="criteria-name">Storage / SSD</span>
                 <span class="criteria-type benefit">BENEFIT</span>
             </div>
-            <div class="criteria-range">📊 {', '.join([f'{x}GB' for x in data_stats['ssd']['options'][:4]])}...</div>
         </div>
         """, unsafe_allow_html=True)
-        ssd_imp = st.select_slider("SSD", importance_options, "Cukup Penting", key="p_ssd", label_visibility="collapsed")
+        ssd_options = data_stats['ssd']['options']
+        ssd_range = st.select_slider(
+            "Range SSD (GB)",
+            options=ssd_options,
+            value=(min(ssd_options), max(ssd_options)),
+            key="filter_ssd"
+        )
+        ssd_stars = st.slider("⭐ Prioritas SSD", 1, 5, 3, key="star_ssd")
+        st.caption(f"Prioritas: {'⭐' * ssd_stars}")
 
     with col2:
         # Rating
-        st.markdown(f"""
+        st.markdown("""
         <div class="criteria-card">
             <div class="criteria-header">
                 <div class="criteria-icon rating">⭐</div>
                 <span class="criteria-name">Rating / Penilaian</span>
                 <span class="criteria-type benefit">BENEFIT</span>
             </div>
-            <div class="criteria-range">📊 {data_stats['rating']['min']:.0f} - {data_stats['rating']['max']:.0f} (avg: {data_stats['rating']['avg']:.0f})</div>
         </div>
         """, unsafe_allow_html=True)
-        rating_imp = st.select_slider("Rating", importance_options, "Cukup Penting", key="p_rating", label_visibility="collapsed")
+        rating_range = st.slider(
+            "Range Rating",
+            min_value=int(data_stats['rating']['min']),
+            max_value=int(data_stats['rating']['max']),
+            value=(int(data_stats['rating']['min']), int(data_stats['rating']['max'])),
+            key="filter_rating"
+        )
+        rating_stars = st.slider("⭐ Prioritas Rating", 1, 5, 3, key="star_rating")
+        st.caption(f"Prioritas: {'⭐' * rating_stars}")
 
         # Display
-        st.markdown(f"""
+        st.markdown("""
         <div class="criteria-card">
             <div class="criteria-header">
                 <div class="criteria-icon display">🖥️</div>
                 <span class="criteria-name">Ukuran Layar</span>
                 <span class="criteria-type benefit">BENEFIT</span>
             </div>
-            <div class="criteria-range">📊 {data_stats['display']['min']:.1f}" - {data_stats['display']['max']:.1f}"</div>
         </div>
         """, unsafe_allow_html=True)
-        display_imp = st.select_slider("Display", importance_options, "Kurang Penting", key="p_display", label_visibility="collapsed")
+        display_range = st.slider(
+            "Range Display (inch)",
+            min_value=float(data_stats['display']['min']),
+            max_value=float(data_stats['display']['max']),
+            value=(float(data_stats['display']['min']), float(data_stats['display']['max'])),
+            step=0.1,
+            key="filter_display"
+        )
+        display_stars = st.slider("⭐ Prioritas Display", 1, 5, 2, key="star_display")
+        st.caption(f"Prioritas: {'⭐' * display_stars}")
 
         # GPU
-        st.markdown(f"""
+        st.markdown("""
         <div class="criteria-card">
             <div class="criteria-header">
                 <div class="criteria-icon gpu">🎮</div>
                 <span class="criteria-name">GPU / Kartu Grafis</span>
                 <span class="criteria-type benefit">BENEFIT</span>
             </div>
-            <div class="criteria-range">📊 Integrated, {', '.join([f'{x}GB' for x in data_stats['gpu']['options'] if x > 0][:4])}</div>
         </div>
         """, unsafe_allow_html=True)
-        gpu_imp = st.select_slider("GPU", importance_options, "Cukup Penting", key="p_gpu", label_visibility="collapsed")
+        gpu_options = data_stats['gpu']['options']
+        gpu_range = st.select_slider(
+            "Range GPU VRAM (GB)",
+            options=gpu_options,
+            value=(min(gpu_options), max(gpu_options)),
+            format_func=lambda x: f"{x}GB" if x > 0 else "Integrated",
+            key="filter_gpu"
+        )
+        gpu_stars = st.slider("⭐ Prioritas GPU", 1, 5, 3, key="star_gpu")
+        st.caption(f"Prioritas: {'⭐' * gpu_stars}")
 
-    # Calculate weights
+    # Store filter ranges in session state
+    st.session_state['filters'] = {
+        'price': (price_range[0] / 192, price_range[1] / 192),  # Convert back to INR for filtering
+        'ram': ram_range,
+        'ssd': ssd_range,
+        'rating': rating_range,
+        'display': display_range,
+        'gpu': gpu_range
+    }
+
+    # Calculate weights from star ratings
     raw_weights = {
-        'price_numeric': importance_to_weight(price_imp),
-        'ram_numeric': importance_to_weight(ram_imp),
-        'ssd_numeric': importance_to_weight(ssd_imp),
-        'rating_numeric': importance_to_weight(rating_imp),
-        'display_numeric': importance_to_weight(display_imp),
-        'gpu_numeric': importance_to_weight(gpu_imp)
+        'price_numeric': star_to_weight(price_stars),
+        'ram_numeric': star_to_weight(ram_stars),
+        'ssd_numeric': star_to_weight(ssd_stars),
+        'rating_numeric': star_to_weight(rating_stars),
+        'display_numeric': star_to_weight(display_stars),
+        'gpu_numeric': star_to_weight(gpu_stars)
     }
     total_raw = sum(raw_weights.values())
     weights = {k: v / total_raw for k, v in raw_weights.items()}
@@ -1214,19 +1282,21 @@ def main():
     st.markdown("""
     <div class="section-header">
         <div class="section-number">📊</div>
-        <div class="section-title">Ringkasan Bobot</div>
+        <div class="section-title">Ringkasan Prioritas & Bobot</div>
     </div>
     """, unsafe_allow_html=True)
 
     labels = ['Harga', 'RAM', 'SSD', 'Rating', 'Display', 'GPU']
     icons = ['💰', '🧠', '💾', '⭐', '🖥️', '🎮']
     keys = ['price_numeric', 'ram_numeric', 'ssd_numeric', 'rating_numeric', 'display_numeric', 'gpu_numeric']
+    stars_list = [price_stars, ram_stars, ssd_stars, rating_stars, display_stars, gpu_stars]
 
     # Use Streamlit columns for reliable display
     weight_cols = st.columns(6)
-    for i, (col, label, icon, key) in enumerate(zip(weight_cols, labels, icons, keys)):
+    for i, (col, label, icon, key, stars) in enumerate(zip(weight_cols, labels, icons, keys, stars_list)):
         with col:
             pct = weights[key] * 100
+            star_display = '⭐' * stars + '☆' * (5 - stars)
             st.markdown(f"""
             <div style="
                 background: linear-gradient(135deg, rgba(30, 41, 59, 0.6), rgba(30, 41, 59, 0.3));
@@ -1236,6 +1306,7 @@ def main():
                 text-align: center;
             ">
                 <div style="font-size: 1.5rem;">{icon}</div>
+                <div style="font-size: 0.8rem; color: #fbbf24; margin: 0.25rem 0;">{star_display}</div>
                 <div style="
                     font-family: 'Space Grotesk', sans-serif;
                     font-size: 1.5rem;
@@ -1265,8 +1336,42 @@ def main():
     if calculate:
         filtered_df = filter_by_category(df, selected_cat)
 
+        # Apply range filters
+        filters = st.session_state.get('filters', {})
+        if filters:
+            # Price filter
+            filtered_df = filtered_df[
+                (filtered_df['price_numeric'] >= filters['price'][0]) &
+                (filtered_df['price_numeric'] <= filters['price'][1])
+            ]
+            # RAM filter
+            filtered_df = filtered_df[
+                (filtered_df['ram_numeric'] >= filters['ram'][0]) &
+                (filtered_df['ram_numeric'] <= filters['ram'][1])
+            ]
+            # SSD filter
+            filtered_df = filtered_df[
+                (filtered_df['ssd_numeric'] >= filters['ssd'][0]) &
+                (filtered_df['ssd_numeric'] <= filters['ssd'][1])
+            ]
+            # Rating filter
+            filtered_df = filtered_df[
+                (filtered_df['rating_numeric'] >= filters['rating'][0]) &
+                (filtered_df['rating_numeric'] <= filters['rating'][1])
+            ]
+            # Display filter
+            filtered_df = filtered_df[
+                (filtered_df['display_numeric'] >= filters['display'][0]) &
+                (filtered_df['display_numeric'] <= filters['display'][1])
+            ]
+            # GPU filter
+            filtered_df = filtered_df[
+                (filtered_df['gpu_numeric'] >= filters['gpu'][0]) &
+                (filtered_df['gpu_numeric'] <= filters['gpu'][1])
+            ]
+
         if len(filtered_df) == 0:
-            st.warning("Tidak ada laptop yang sesuai filter.")
+            st.warning("Tidak ada laptop yang sesuai filter. Coba perluas range filter Anda.")
             return
 
         with st.spinner("🔄 Menganalisis data..."):
