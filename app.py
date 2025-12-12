@@ -1144,11 +1144,8 @@ def main():
             <span>✨</span>
             <span>KELOMPOK 3 - Powered by SAW Algorithm</span>
         </div>
-        <h1 class="hero-title">LAPTOP FINDER</h1>
-        <p class="hero-subtitle">
-            Sistem cerdas untuk menemukan laptop impian Anda.
-            Analisis {total}+ laptop dengan teknologi Decision Support System.
-        </p>
+        <h1 class="hero-title">Sistem cerdas untuk menemukan laptop impian Anda.
+            Analisis {total}+ laptop dengan teknologi Decision Support System.</h1>
     </div>
     """.format(total=len(df)), unsafe_allow_html=True)
 
