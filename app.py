@@ -21,6 +21,8 @@ from ai_assistant import (
     parse_user_message,
     convert_ai_filters_to_app_filters,
     convert_ai_weights_to_app_weights,
+    ConversationMemory,
+    generate_explanation,
 )
 
 # Path to data file
@@ -1234,6 +1236,8 @@ def main():
         st.session_state['ai_weights'] = {}
     if 'use_ai_mode' not in st.session_state:
         st.session_state['use_ai_mode'] = True
+    if 'conversation_memory' not in st.session_state:
+        st.session_state['conversation_memory'] = ConversationMemory()
 
     # Convert price range to IDR for display
     price_min_idr = int(data_stats['price']['min'] * 192)
@@ -1298,6 +1302,17 @@ def main():
                             """, unsafe_allow_html=True)
                             # Use st.markdown for proper markdown rendering
                             st.markdown(chat['content'])
+                        elif chat.get('is_clarification'):
+                            # Clarification message with distinct styling
+                            st.markdown(f"""
+                            <div class="chat-bubble chat-bubble-ai" style="
+                                background: linear-gradient(135deg, rgba(251, 191, 36, 0.15), rgba(245, 158, 11, 0.1));
+                                border: 1px solid rgba(251, 191, 36, 0.3);
+                            ">
+                                <div class="chat-sender">❓ Klarifikasi</div>
+                                <div>{chat['content']}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
                         else:
                             # AI response with filters badges
                             filters_html = ""
@@ -1336,20 +1351,40 @@ def main():
 
         # Process chat
         if send_button and user_message:
-            # Add user message to history
+            # Get memory
+            memory = st.session_state['conversation_memory']
+
+            # Add user message to history and memory
             st.session_state['chat_history'].append({
                 'role': 'user',
                 'content': user_message
             })
+            memory.add_message('user', user_message)
 
-            # Process with AI (no API key needed)
+            # Process with AI (with memory context)
             with st.spinner("🤔 AI sedang menganalisis..."):
-                result = parse_user_message(user_message, data_stats)
+                result = parse_user_message(user_message, data_stats, memory)
 
-            if result['success']:
+            # Check if AI needs clarification
+            if result.get('needs_clarification', False):
+                # AI is asking for clarification
+                clarification_msg = result['response_message']
+                st.session_state['chat_history'].append({
+                    'role': 'assistant',
+                    'content': clarification_msg,
+                    'is_clarification': True
+                })
+                memory.add_message('assistant', clarification_msg)
+                st.rerun()
+
+            elif result['success']:
                 # Store filters and weights
                 st.session_state['ai_filters'] = result['filters']
                 st.session_state['ai_weights'] = result['weights']
+
+                # Update memory with detected preferences
+                if result.get('detected_preferences'):
+                    memory.update_preferences(result['detected_preferences'])
 
                 # Convert to app format
                 app_filters = convert_ai_filters_to_app_filters(
@@ -1405,6 +1440,8 @@ def main():
                         'role': 'assistant',
                         'content': recommendation_msg
                     })
+                    memory.add_message('assistant', result['response_message'])
+                    memory.add_message('assistant', recommendation_msg)
                 else:
                     # Calculate SAW
                     scores, decision_matrix, normalized_matrix = calculate_saw_scores(
@@ -1418,8 +1455,16 @@ def main():
                     st.session_state['decision'] = decision_matrix.loc[ranked_df.index]
                     st.session_state['show_results'] = True
 
-                    # Build recommendation chat message
+                    # Build recommendation chat message with EXPLAINABILITY
                     recommendation_msg = f"🎯 **Berdasarkan analisis kebutuhan Anda, berikut {min(3, len(ranked_df))} laptop terbaik:**\n\n"
+
+                    # Prepare user preferences for explanation
+                    user_prefs = memory.user_preferences.copy()
+                    if result.get('use_case'):
+                        user_prefs['use_case'] = result['use_case']
+
+                    # Convert ranked_df to list of dicts for explanation
+                    candidates_list = ranked_df.to_dict('records')
 
                     medals = ['🥇', '🥈', '🥉']
                     for i, (idx, laptop) in enumerate(ranked_df.head(3).iterrows()):
@@ -1432,11 +1477,19 @@ def main():
 
                         recommendation_msg += f"{medal} **{laptop['Model'][:40]}{'...' if len(str(laptop['Model'])) > 40 else ''}**\n"
                         recommendation_msg += f"   💰 {price_str} | ⭐ Rating: {laptop['Rating']} | Score: {laptop['SAW_Score']:.3f}\n"
-                        recommendation_msg += f"   🧠 {laptop['Ram']} | 💾 {laptop['SSD']}\n\n"
+                        recommendation_msg += f"   🧠 {laptop['Ram']} | 💾 {laptop['SSD']}\n"
 
-                    # Add summary
-                    top_laptop = ranked_df.iloc[0]
-                    recommendation_msg += f"---\n✨ **Rekomendasi utama:** {top_laptop['Model'][:50]} dengan skor SAW tertinggi ({top_laptop['SAW_Score']:.4f})"
+                        # Add explanation for top laptop only
+                        if i == 0:
+                            laptop_dict = laptop.to_dict()
+                            explanation = generate_explanation(laptop_dict, user_prefs, candidates_list, rank=1)
+                            if explanation:
+                                recommendation_msg += f"\n{explanation}\n"
+
+                        recommendation_msg += "\n"
+
+                        # Track recommended laptops in memory
+                        memory.add_recommended_laptop(laptop['Model'][:30])
 
                     # Add AI analysis + recommendations to chat history
                     st.session_state['chat_history'].append({
@@ -1450,6 +1503,8 @@ def main():
                         'content': recommendation_msg,
                         'is_recommendation': True
                     })
+                    memory.add_message('assistant', result['response_message'])
+                    memory.add_message('assistant', recommendation_msg)
 
                 st.session_state['ai_ready'] = True
                 st.rerun()
@@ -1459,6 +1514,7 @@ def main():
                     'role': 'assistant',
                     'content': result['response_message']
                 })
+                memory.add_message('assistant', result['response_message'])
                 st.error(f"⚠️ {result.get('error', 'Terjadi kesalahan')}")
 
                 col_retry, col_manual = st.columns(2)
@@ -1477,6 +1533,8 @@ def main():
                 st.session_state['ai_filters'] = {}
                 st.session_state['ai_weights'] = {}
                 st.session_state['ai_ready'] = False
+                # Reset conversation memory
+                st.session_state['conversation_memory'] = ConversationMemory()
                 st.rerun()
 
         # Show AI-generated weights summary
@@ -1525,8 +1583,8 @@ def main():
             border: 1px solid rgba(99, 102, 241, 0.2);
         ">
             <p style="color: #94a3b8; font-size: 0.9rem; margin: 0;">
-                🎯 <strong style="color: #fff;">Mode Manual:</strong> Atur filter range untuk setiap kriteria.
-                Semua kriteria memiliki bobot yang sama (equal weight).
+                🎯 <strong style="color: #fff;">Mode Manual:</strong> Atur filter range dan prioritas (bobot) untuk setiap kriteria.
+                Prioritas 1-5 bintang menentukan seberapa penting kriteria tersebut dalam perhitungan SAW.
             </p>
         </div>
         """, unsafe_allow_html=True)
@@ -1544,18 +1602,22 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            manual_price_range = st.slider(
-                "Range Harga",
-                min_value=price_min_idr,
-                max_value=price_max_idr,
-                value=(price_min_idr, price_max_idr),
-                step=1000000,
-                key="manual_filter_price"
-            )
+            col_price_range, col_price_priority = st.columns([3, 1])
+            with col_price_range:
+                manual_price_range = st.slider(
+                    "Range Harga " ,
+                    min_value=price_min_idr,
+                    max_value=price_max_idr,
+                    value=(price_min_idr, price_max_idr),
+                    step=1000000,
+                    key="manual_filter_price"
+                )
+            with col_price_priority:
+                price_priority = st.slider("⭐", 1, 5, 3, key="priority_price", help="Prioritas Harga")
             st.markdown(f"""
             <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #a5b4fc; margin-top: -0.5rem;">
-                <span>Min: <strong>Rp {manual_price_range[0]:,.0f}</strong></span>
-                <span>Max: <strong>Rp {manual_price_range[1]:,.0f}</strong></span>
+                <span>Rp {manual_price_range[0]:,.0f} - Rp {manual_price_range[1]:,.0f}</span>
+                <span style="color: #fbbf24;">{'⭐' * price_priority}{'☆' * (5-price_priority)}</span>
             </div>
             """.replace(",", "."), unsafe_allow_html=True)
 
@@ -1569,13 +1631,23 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            ram_options = data_stats['ram']['options']
-            manual_ram_range = st.select_slider(
-                "Range RAM (GB)",
-                options=ram_options,
-                value=(min(ram_options), max(ram_options)),
-                key="manual_filter_ram"
-            )
+            col_ram_range, col_ram_priority = st.columns([3, 1])
+            with col_ram_range:
+                ram_options = data_stats['ram']['options']
+                manual_ram_range = st.select_slider(
+                    "Range RAM (GB)",
+                    options=ram_options,
+                    value=(min(ram_options), max(ram_options)),
+                    key="manual_filter_ram"
+                )
+            with col_ram_priority:
+                ram_priority = st.slider("⭐", 1, 5, 3, key="priority_ram", help="Prioritas RAM")
+            st.markdown(f"""
+            <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #a5b4fc;">
+                <span>{manual_ram_range[0]}GB - {manual_ram_range[1]}GB</span>
+                <span style="color: #fbbf24;">{'⭐' * ram_priority}{'☆' * (5-ram_priority)}</span>
+            </div>
+            """, unsafe_allow_html=True)
 
             # Storage
             st.markdown("""
@@ -1587,13 +1659,23 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            ssd_options = data_stats['ssd']['options']
-            manual_ssd_range = st.select_slider(
-                "Range SSD (GB)",
-                options=ssd_options,
-                value=(min(ssd_options), max(ssd_options)),
-                key="manual_filter_ssd"
-            )
+            col_ssd_range, col_ssd_priority = st.columns([3, 1])
+            with col_ssd_range:
+                ssd_options = data_stats['ssd']['options']
+                manual_ssd_range = st.select_slider(
+                    "Range SSD (GB)",
+                    options=ssd_options,
+                    value=(min(ssd_options), max(ssd_options)),
+                    key="manual_filter_ssd"
+                )
+            with col_ssd_priority:
+                ssd_priority = st.slider("⭐", 1, 5, 3, key="priority_ssd", help="Prioritas SSD")
+            st.markdown(f"""
+            <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #a5b4fc;">
+                <span>{manual_ssd_range[0]}GB - {manual_ssd_range[1]}GB</span>
+                <span style="color: #fbbf24;">{'⭐' * ssd_priority}{'☆' * (5-ssd_priority)}</span>
+            </div>
+            """, unsafe_allow_html=True)
 
         with col2:
             # Rating
@@ -1606,13 +1688,23 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            manual_rating_range = st.slider(
-                "Range Rating",
-                min_value=int(data_stats['rating']['min']),
-                max_value=int(data_stats['rating']['max']),
-                value=(int(data_stats['rating']['min']), int(data_stats['rating']['max'])),
-                key="manual_filter_rating"
-            )
+            col_rating_range, col_rating_priority = st.columns([3, 1])
+            with col_rating_range:
+                manual_rating_range = st.slider(
+                    "Range Rating",
+                    min_value=int(data_stats['rating']['min']),
+                    max_value=int(data_stats['rating']['max']),
+                    value=(int(data_stats['rating']['min']), int(data_stats['rating']['max'])),
+                    key="manual_filter_rating"
+                )
+            with col_rating_priority:
+                rating_priority = st.slider("⭐", 1, 5, 3, key="priority_rating", help="Prioritas Rating")
+            st.markdown(f"""
+            <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #a5b4fc;">
+                <span>{manual_rating_range[0]} - {manual_rating_range[1]}</span>
+                <span style="color: #fbbf24;">{'⭐' * rating_priority}{'☆' * (5-rating_priority)}</span>
+            </div>
+            """, unsafe_allow_html=True)
 
             # Display
             st.markdown("""
@@ -1624,14 +1716,24 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            manual_display_range = st.slider(
-                "Range Display (inch)",
-                min_value=float(data_stats['display']['min']),
-                max_value=float(data_stats['display']['max']),
-                value=(float(data_stats['display']['min']), float(data_stats['display']['max'])),
-                step=0.1,
-                key="manual_filter_display"
-            )
+            col_display_range, col_display_priority = st.columns([3, 1])
+            with col_display_range:
+                manual_display_range = st.slider(
+                    "Range Display (inch)",
+                    min_value=float(data_stats['display']['min']),
+                    max_value=float(data_stats['display']['max']),
+                    value=(float(data_stats['display']['min']), float(data_stats['display']['max'])),
+                    step=0.1,
+                    key="manual_filter_display"
+                )
+            with col_display_priority:
+                display_priority = st.slider("⭐", 1, 5, 3, key="priority_display", help="Prioritas Display")
+            st.markdown(f"""
+            <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #a5b4fc;">
+                <span>{manual_display_range[0]:.1f}" - {manual_display_range[1]:.1f}"</span>
+                <span style="color: #fbbf24;">{'⭐' * display_priority}{'☆' * (5-display_priority)}</span>
+            </div>
+            """, unsafe_allow_html=True)
 
             # GPU
             st.markdown("""
@@ -1643,16 +1745,71 @@ def main():
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            gpu_options = data_stats['gpu']['options']
-            manual_gpu_range = st.select_slider(
-                "Range GPU VRAM (GB)",
-                options=gpu_options,
-                value=(min(gpu_options), max(gpu_options)),
-                format_func=lambda x: f"{x}GB" if x > 0 else "Integrated",
-                key="manual_filter_gpu"
-            )
+            col_gpu_range, col_gpu_priority = st.columns([3, 1])
+            with col_gpu_range:
+                gpu_options = data_stats['gpu']['options']
+                manual_gpu_range = st.select_slider(
+                    "Range GPU VRAM (GB)",
+                    options=gpu_options,
+                    value=(min(gpu_options), max(gpu_options)),
+                    format_func=lambda x: f"{x}GB" if x > 0 else "Integrated",
+                    key="manual_filter_gpu"
+                )
+            with col_gpu_priority:
+                gpu_priority = st.slider("⭐", 1, 5, 3, key="priority_gpu", help="Prioritas GPU")
+            st.markdown(f"""
+            <div style="display: flex; justify-content: space-between; font-size: 0.85rem; color: #a5b4fc;">
+                <span>{f"{manual_gpu_range[0]}GB" if manual_gpu_range[0] > 0 else "Integrated"} - {manual_gpu_range[1]}GB</span>
+                <span style="color: #fbbf24;">{'⭐' * gpu_priority}{'☆' * (5-gpu_priority)}</span>
+            </div>
+            """, unsafe_allow_html=True)
 
-        # Store manual filter ranges
+        # Weight Summary for Manual Mode
+        st.markdown("""
+        <div class="section-header" style="margin-top: 1.5rem;">
+            <div class="section-number">📊</div>
+            <div class="section-title">Ringkasan Bobot Kriteria</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Calculate normalized weights from star ratings
+        star_to_weight = {1: 0.05, 2: 0.10, 3: 0.15, 4: 0.20, 5: 0.25}
+        raw_weights = {
+            'price': star_to_weight[price_priority],
+            'ram': star_to_weight[ram_priority],
+            'ssd': star_to_weight[ssd_priority],
+            'rating': star_to_weight[rating_priority],
+            'display': star_to_weight[display_priority],
+            'gpu': star_to_weight[gpu_priority]
+        }
+        total_weight = sum(raw_weights.values())
+        normalized_weights = {k: v / total_weight for k, v in raw_weights.items()}
+
+        # Display weight summary
+        weight_cols = st.columns(6)
+        labels = ['Harga', 'RAM', 'SSD', 'Rating', 'Display', 'GPU']
+        icons = ['💰', '🧠', '💾', '⭐', '🖥️', '🎮']
+        weight_keys = ['price', 'ram', 'ssd', 'rating', 'display', 'gpu']
+        priorities = [price_priority, ram_priority, ssd_priority, rating_priority, display_priority, gpu_priority]
+
+        for col, label, icon, key, priority in zip(weight_cols, labels, icons, weight_keys, priorities):
+            with col:
+                st.markdown(f"""
+                <div style="
+                    background: linear-gradient(135deg, rgba(30, 41, 59, 0.6), rgba(30, 41, 59, 0.3));
+                    border: 1px solid rgba(99, 102, 241, 0.3);
+                    border-radius: 12px;
+                    padding: 0.75rem;
+                    text-align: center;
+                ">
+                    <div style="font-size: 1.25rem;">{icon}</div>
+                    <div style="font-size: 0.7rem; color: #fbbf24; margin: 0.25rem 0;">{'⭐' * priority}{'☆' * (5-priority)}</div>
+                    <div style="font-size: 1rem; font-weight: bold; color: #a5b4fc;">{normalized_weights[key]*100:.1f}%</div>
+                    <div style="font-size: 0.7rem; color: #94a3b8;">{label}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        # Store manual filter ranges and weights
         if not st.session_state.get('use_ai_mode') or not st.session_state.get('ai_ready'):
             st.session_state['filters'] = {
                 'price': (manual_price_range[0] / 192, manual_price_range[1] / 192),
@@ -1662,14 +1819,14 @@ def main():
                 'display': manual_display_range,
                 'gpu': manual_gpu_range
             }
-            # Equal weights for manual mode
+            # Weights from star priorities
             st.session_state['weights'] = {
-                'price_numeric': 1/6,
-                'ram_numeric': 1/6,
-                'ssd_numeric': 1/6,
-                'rating_numeric': 1/6,
-                'display_numeric': 1/6,
-                'gpu_numeric': 1/6
+                'price_numeric': normalized_weights['price'],
+                'ram_numeric': normalized_weights['ram'],
+                'ssd_numeric': normalized_weights['ssd'],
+                'rating_numeric': normalized_weights['rating'],
+                'display_numeric': normalized_weights['display'],
+                'gpu_numeric': normalized_weights['gpu']
             }
 
     # Get current weights for display
